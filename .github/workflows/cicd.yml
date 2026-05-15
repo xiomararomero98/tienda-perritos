@@ -7,7 +7,6 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
 jobs:
   build-and-push:
@@ -38,3 +37,29 @@ jobs:
           docker build -t tienda-backend ./backend
           docker tag tienda-backend:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-backend:latest
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-backend:latest
+
+      - name: Deploy Frontend en EC2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.EC2_FRONTEND_IP }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            aws ecr get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+            sudo docker stop tienda-frontend || true
+            sudo docker rm tienda-frontend || true
+            sudo docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-frontend:latest
+            sudo docker run -d --name tienda-frontend -p 8080:80 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-frontend:latest
+
+      - name: Deploy Backend en EC2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.EC2_BACKEND_IP }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            aws ecr get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+            sudo docker stop tienda-backend || true
+            sudo docker rm tienda-backend || true
+            sudo docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-backend:latest
+            sudo docker run -d --name tienda-backend --network tienda-net -e DB_HOST=tienda-db -e DB_USER=root -e DB_PASSWORD=admin123 -e DB_NAME=tienda_perritos -e DB_PORT=3306 -p 3001:3001 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/tienda-backend:latest
