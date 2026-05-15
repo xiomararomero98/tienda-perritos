@@ -1,5 +1,4 @@
-Buen README base, pero hay que mejorarlo para sacar el 100% en IE8. Reemplaza todo el contenido con este que es más completo y técnico:
-markdown# Tienda de Alimentos para Perritos 🐶
+#Tienda de Alimentos para Perritos 🐶
 
 Aplicación web CRUD desplegada en AWS EC2 con Docker, CI/CD automatizado con GitHub Actions y Amazon ECR.
 
