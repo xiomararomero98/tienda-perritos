@@ -62,4 +62,3 @@ sudo docker run -d --name tienda-backend --network tienda-net \
 - fix: actualiza URL del backend a IP de EC2
 - docs: agrega README con documentación del proyecto
 
-## presentacion cambio
