@@ -2,7 +2,7 @@
 
 Aplicación web CRUD desplegada en AWS EC2 con Docker, CI/CD automatizado con GitHub Actions y Amazon ECR.
 
-## Tecnologías
+## Tecnologías utilizadas
 - Frontend: HTML + JavaScript servido con Nginx
 - Backend: Node.js + Express
 - Base de datos: MySQL 8
@@ -61,3 +61,5 @@ sudo docker run -d --name tienda-backend --network tienda-net \
 - feat: agrega pipeline CI/CD con GitHub Actions para ECR
 - fix: actualiza URL del backend a IP de EC2
 - docs: agrega README con documentación del proyecto
+
+## presentacion cambio
