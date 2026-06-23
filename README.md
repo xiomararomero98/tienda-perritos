@@ -1,4 +1,4 @@
-#Tienda de Alimentos para Perritos 🐶
+#Tienda de Alimentos para Perritos 2026 🐶
 
 Aplicación web CRUD desplegada en AWS EC2 con Docker, CI/CD automatizado con GitHub Actions y Amazon ECR.
 
