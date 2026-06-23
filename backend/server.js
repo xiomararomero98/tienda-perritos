@@ -20,17 +20,17 @@ let pool;
 
 async function initDb() {
   try {
-    pool = mysql.createPool({
+    // Paso 1: conectar sin BD para crearla
+    const tempPool = mysql.createPool({
       host: DB_HOST,
       user: DB_USER,
       password: DB_PASSWORD,
       port: DB_PORT,
       waitForConnections: true,
       connectionLimit: 10,
-      queueLimit: 0,
     });
 
-    const conn = await pool.getConnection();
+    const conn = await tempPool.getConnection();
     await conn.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
     await conn.query(`USE ${DB_NAME}`);
     await conn.query(`
@@ -55,7 +55,20 @@ async function initDb() {
     }
 
     conn.release();
-    await pool.query(`USE ${DB_NAME}`);
+    await tempPool.end();
+
+    // Paso 2: pool definitivo CON database ya seleccionada
+    pool = mysql.createPool({
+      host: DB_HOST,
+      user: DB_USER,
+      password: DB_PASSWORD,
+      database: DB_NAME,
+      port: DB_PORT,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
+
     console.log("Base de datos inicializada correctamente.");
   } catch (err) {
     console.error("Error al inicializar la BD:", err);
