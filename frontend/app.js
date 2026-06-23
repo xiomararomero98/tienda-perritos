@@ -8,8 +8,7 @@ const API_BASE = (() => {
   if (host === "localhost" || host === "127.0.0.1") {
     return "http://localhost:3001/api/productos";
   }
-  // Para ejecución en EC2 u otro host, usar el mismo hostname y puerto 3001
-  return `http://13.221.176.34:3001/api/productos`;;
+  return "/api/productos";
 })();
 
 let editandoId = null;
