@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const {
-  DB_HOST = "db",
+  DB_HOST = "localhost",
   DB_USER = "root",
   DB_PASSWORD = "admin123",
   DB_NAME = "tienda_perritos",
@@ -18,21 +18,41 @@ app.use(express.json());
 
 let pool;
 
+/**
+ * Espera algunos milisegundos.
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Inicializa la base de datos:
+ * 1. Espera a que MySQL esté disponible.
+ * 2. Crea la base de datos si no existe.
+ * 3. Crea la tabla productos si no existe.
+ * 4. Inserta productos iniciales si la tabla está vacía.
+ * 5. Crea el pool definitivo usando la base de datos.
+ */
 async function initDb() {
+  let tempPool;
+  let conn;
+
   try {
-    // Paso 1: conectar sin BD para crearla
-    const tempPool = mysql.createPool({
+    tempPool = mysql.createPool({
       host: DB_HOST,
       user: DB_USER,
       password: DB_PASSWORD,
-      port: DB_PORT,
+      port: Number(DB_PORT),
       waitForConnections: true,
       connectionLimit: 10,
+      queueLimit: 0,
     });
 
-    const conn = await tempPool.getConnection();
-    await conn.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
-    await conn.query(`USE ${DB_NAME}`);
+    conn = await tempPool.getConnection();
+
+    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
+    await conn.query(`USE \`${DB_NAME}\``);
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS productos (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -43,7 +63,8 @@ async function initDb() {
       )
     `);
 
-    const [rows] = await conn.query(`SELECT COUNT(*) as total FROM productos`);
+    const [rows] = await conn.query("SELECT COUNT(*) AS total FROM productos");
+
     if (rows[0].total === 0) {
       await conn.query(`
         INSERT INTO productos (nombre, descripcion, precio, stock) VALUES
@@ -51,19 +72,22 @@ async function initDb() {
         ('Alimento Adulto Light', 'Control de peso, razas medianas', 17990, 8),
         ('Snacks Dentales', 'Ayuda a la limpieza dental', 5990, 30)
       `);
+
       console.log("Productos iniciales insertados.");
     }
 
-    conn.release();
+    if (conn) {
+      conn.release();
+    }
+
     await tempPool.end();
 
-    // Paso 2: pool definitivo CON database ya seleccionada
     pool = mysql.createPool({
       host: DB_HOST,
       user: DB_USER,
       password: DB_PASSWORD,
       database: DB_NAME,
-      port: DB_PORT,
+      port: Number(DB_PORT),
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
@@ -71,8 +95,55 @@ async function initDb() {
 
     console.log("Base de datos inicializada correctamente.");
   } catch (err) {
-    console.error("Error al inicializar la BD:", err);
+    if (conn) {
+      conn.release();
+    }
+
+    if (tempPool) {
+      await tempPool.end().catch(() => {});
+    }
+
+    console.error("Error al inicializar la BD:", err.message);
+    throw err;
   }
+}
+
+/**
+ * Reintenta la conexión porque en ECS MySQL puede tardar más que el backend.
+ */
+async function initDbWithRetry(retries = 20, delay = 3000) {
+  for (let i = 1; i <= retries; i++) {
+    try {
+      console.log(`Intentando conectar a MySQL... intento ${i}/${retries}`);
+      await initDb();
+
+      if (!pool) {
+        throw new Error("El pool MySQL no se inicializó.");
+      }
+
+      console.log("MySQL conectado correctamente.");
+      return;
+    } catch (error) {
+      console.error(`Intento ${i}/${retries} falló: ${error.message}`);
+
+      if (i === retries) {
+        throw error;
+      }
+
+      await sleep(delay);
+    }
+  }
+}
+
+/**
+ * Valida que el pool esté listo antes de usarlo.
+ */
+function getPool() {
+  if (!pool) {
+    throw new Error("La conexión a MySQL aún no está lista.");
+  }
+
+  return pool;
 }
 
 function handleError(res, error, message = "Error interno del servidor") {
@@ -82,7 +153,12 @@ function handleError(res, error, message = "Error interno del servidor") {
 
 app.get("/api/productos", async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT id, nombre, descripcion, precio, stock FROM productos ORDER BY id DESC");
+    const db = getPool();
+
+    const [rows] = await db.query(
+      "SELECT id, nombre, descripcion, precio, stock FROM productos ORDER BY id DESC"
+    );
+
     res.json(rows);
   } catch (err) {
     handleError(res, err, "No se pudieron obtener los productos.");
@@ -91,11 +167,19 @@ app.get("/api/productos", async (req, res) => {
 
 app.get("/api/productos/:id", async (req, res) => {
   const { id } = req.params;
+
   try {
-    const [rows] = await pool.query("SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?", [id]);
+    const db = getPool();
+
+    const [rows] = await db.query(
+      "SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?",
+      [id]
+    );
+
     if (rows.length === 0) {
       return res.status(404).json({ message: "Producto no encontrado." });
     }
+
     res.json(rows[0]);
   } catch (err) {
     handleError(res, err, "No se pudo obtener el producto.");
@@ -106,16 +190,26 @@ app.post("/api/productos", async (req, res) => {
   const { nombre, descripcion, precio, stock } = req.body;
 
   if (!nombre || precio == null || stock == null) {
-    return res.status(400).json({ message: "Nombre, precio y stock son obligatorios." });
+    return res.status(400).json({
+      message: "Nombre, precio y stock son obligatorios.",
+    });
   }
 
   try {
-    const [result] = await pool.query(
+    const db = getPool();
+
+    const [result] = await db.query(
       "INSERT INTO productos (nombre, descripcion, precio, stock) VALUES (?, ?, ?, ?)",
       [nombre, descripcion || null, precio, stock]
     );
+
     const nuevoId = result.insertId;
-    const [rows] = await pool.query("SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?", [nuevoId]);
+
+    const [rows] = await db.query(
+      "SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?",
+      [nuevoId]
+    );
+
     res.status(201).json(rows[0]);
   } catch (err) {
     handleError(res, err, "No se pudo crear el producto.");
@@ -127,11 +221,15 @@ app.put("/api/productos/:id", async (req, res) => {
   const { nombre, descripcion, precio, stock } = req.body;
 
   if (!nombre || precio == null || stock == null) {
-    return res.status(400).json({ message: "Nombre, precio y stock son obligatorios." });
+    return res.status(400).json({
+      message: "Nombre, precio y stock son obligatorios.",
+    });
   }
 
   try {
-    const [result] = await pool.query(
+    const db = getPool();
+
+    const [result] = await db.query(
       "UPDATE productos SET nombre = ?, descripcion = ?, precio = ?, stock = ? WHERE id = ?",
       [nombre, descripcion || null, precio, stock, id]
     );
@@ -140,7 +238,11 @@ app.put("/api/productos/:id", async (req, res) => {
       return res.status(404).json({ message: "Producto no encontrado." });
     }
 
-    const [rows] = await pool.query("SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?", [id]);
+    const [rows] = await db.query(
+      "SELECT id, nombre, descripcion, precio, stock FROM productos WHERE id = ?",
+      [id]
+    );
+
     res.json(rows[0]);
   } catch (err) {
     handleError(res, err, "No se pudo actualizar el producto.");
@@ -149,11 +251,16 @@ app.put("/api/productos/:id", async (req, res) => {
 
 app.delete("/api/productos/:id", async (req, res) => {
   const { id } = req.params;
+
   try {
-    const [result] = await pool.query("DELETE FROM productos WHERE id = ?", [id]);
+    const db = getPool();
+
+    const [result] = await db.query("DELETE FROM productos WHERE id = ?", [id]);
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Producto no encontrado." });
     }
+
     res.json({ message: "Producto eliminado correctamente." });
   } catch (err) {
     handleError(res, err, "No se pudo eliminar el producto.");
@@ -161,10 +268,30 @@ app.delete("/api/productos/:id", async (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "Backend de tienda de perritos en ejecución." });
+  res.json({
+    status: "ok",
+    message: "Backend de tienda de perritos en ejecución.",
+  });
 });
 
-app.listen(PORT, async () => {
-  console.log(`Servidor backend escuchando en puerto ${PORT}`);
-  await initDb();
-});
+/**
+ * Inicia el backend solamente cuando MySQL ya está listo.
+ */
+async function startServer() {
+  try {
+    await initDbWithRetry();
+
+    app.listen(PORT, () => {
+      console.log(`Servidor backend escuchando en puerto ${PORT}`);
+    });
+  } catch (error) {
+    console.error(
+      "No se pudo iniciar el backend porque MySQL no está disponible:",
+      error
+    );
+
+    process.exit(1);
+  }
+}
+
+startServer();
