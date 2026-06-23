@@ -18,32 +18,55 @@ app.use(express.json());
 
 let pool;
 
-// Inicializar pool de conexiones
 async function initDb() {
   try {
     pool = mysql.createPool({
       host: DB_HOST,
       user: DB_USER,
       password: DB_PASSWORD,
-      database: DB_NAME,
       port: DB_PORT,
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
     });
-    console.log("Pool de conexiones MySQL inicializado.");
+
+    const conn = await pool.getConnection();
+    await conn.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
+    await conn.query(`USE ${DB_NAME}`);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS productos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        descripcion VARCHAR(255),
+        precio DECIMAL(10,2) NOT NULL,
+        stock INT NOT NULL
+      )
+    `);
+
+    const [rows] = await conn.query(`SELECT COUNT(*) as total FROM productos`);
+    if (rows[0].total === 0) {
+      await conn.query(`
+        INSERT INTO productos (nombre, descripcion, precio, stock) VALUES
+        ('Alimento Cachorro Premium', 'Sabor pollo, razas pequeñas', 19990, 15),
+        ('Alimento Adulto Light', 'Control de peso, razas medianas', 17990, 8),
+        ('Snacks Dentales', 'Ayuda a la limpieza dental', 5990, 30)
+      `);
+      console.log("Productos iniciales insertados.");
+    }
+
+    conn.release();
+    await pool.query(`USE ${DB_NAME}`);
+    console.log("Base de datos inicializada correctamente.");
   } catch (err) {
-    console.error("Error al inicializar pool de MySQL:", err);
+    console.error("Error al inicializar la BD:", err);
   }
 }
 
-// Helper para manejar errores
 function handleError(res, error, message = "Error interno del servidor") {
   console.error(error);
   res.status(500).json({ message });
 }
 
-// Obtener todos los productos
 app.get("/api/productos", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT id, nombre, descripcion, precio, stock FROM productos ORDER BY id DESC");
@@ -53,7 +76,6 @@ app.get("/api/productos", async (req, res) => {
   }
 });
 
-// Obtener un producto por ID
 app.get("/api/productos/:id", async (req, res) => {
   const { id } = req.params;
   try {
@@ -67,7 +89,6 @@ app.get("/api/productos/:id", async (req, res) => {
   }
 });
 
-// Crear un nuevo producto
 app.post("/api/productos", async (req, res) => {
   const { nombre, descripcion, precio, stock } = req.body;
 
@@ -88,7 +109,6 @@ app.post("/api/productos", async (req, res) => {
   }
 });
 
-// Actualizar un producto
 app.put("/api/productos/:id", async (req, res) => {
   const { id } = req.params;
   const { nombre, descripcion, precio, stock } = req.body;
@@ -114,7 +134,6 @@ app.put("/api/productos/:id", async (req, res) => {
   }
 });
 
-// Eliminar un producto
 app.delete("/api/productos/:id", async (req, res) => {
   const { id } = req.params;
   try {
@@ -128,12 +147,10 @@ app.delete("/api/productos/:id", async (req, res) => {
   }
 });
 
-// Endpoint de salud
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Backend de tienda de perritos en ejecución." });
 });
 
-// Iniciar servidor
 app.listen(PORT, async () => {
   console.log(`Servidor backend escuchando en puerto ${PORT}`);
   await initDb();
